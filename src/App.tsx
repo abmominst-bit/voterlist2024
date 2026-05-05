@@ -228,10 +228,10 @@ export default function App() {
                     <ol className="list-decimal list-inside ml-4 mt-1 space-y-1">
                       <li>Go to <span className="font-bold">Settings → Environment Variables</span></li>
                       <li>Add <span className="text-slate-900">VITE_SUPABASE_URL</span>, <span className="text-slate-900">VITE_SUPABASE_ANON_KEY</span> and <span className="text-slate-900">VITE_GEMINI_API_KEY</span></li>
-                      <li className="text-red-600">CRITICAL: Go to the <span className="font-bold">Deployments</span> tab and click <span className="font-bold">Redeploy</span> on your latest build.</li>
+                      <li className="text-red-600 font-extrabold uppercase">CRITICAL: Go to the "Deployments" tab in Vercel and click "Redeploy" on your latest build. Environment variables are only applied during the build process!</li>
                     </ol>
                   </li>
-                  <li>For local testing: Add them to your environment variables.</li>
+                  <li>For local testing: Create a <span className="font-bold">.env</span> file and add the variables there.</li>
                 </>
               )}
               <li>Go to your Supabase <span className="font-bold">SQL Editor</span> and run this script:</li>

@@ -217,16 +217,20 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
       }
 
       try {
-        // Try both Vite env and process env (for different deployment environments)
+        // Look for the key in multiple possible locations
         const apiKey = import.meta.env.VITE_GEMINI_API_KEY || 
                        (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) ||
-                       (typeof process !== 'undefined' ? process.env.VITE_GEMINI_API_KEY : undefined);
+                       (typeof process !== 'undefined' ? (process.env as any).VITE_GEMINI_API_KEY : undefined);
         
-        console.log("Gemini OCR: Initializing...");
+        console.log("Gemini Deployment Check:", {
+          hasViteEnv: !!import.meta.env.VITE_GEMINI_API_KEY,
+          hasProcessEnv: typeof process !== 'undefined' && !!process.env.GEMINI_API_KEY,
+          hasProcessViteEnv: typeof process !== 'undefined' && !!(process.env as any).VITE_GEMINI_API_KEY
+        });
 
-        if (!apiKey || apiKey === "undefined" || apiKey === "MY_GEMINI_API_KEY") {
-          console.error("Gemini API Key missing or invalid.");
-          throw new Error("Gemini API Key missing. If you just added it to Vercel, you MUST manually REDEPLOY your project from the Deployments tab.");
+        if (!apiKey || apiKey === "undefined" || apiKey === "MY_GEMINI_API_KEY" || apiKey.length < 10) {
+          console.error("Gemini API Key validation failed. Key found:", apiKey ? "Yes (too short or placeholder)" : "No");
+          throw new Error("Gemini API Key missing or invalid. Action Required:\n1. Ensure VITE_GEMINI_API_KEY is in Vercel Env Vars.\n2. You MUST trigger a MANUAL REDEPLOY in Vercel.");
         }
 
         const ai = new GoogleGenAI({ apiKey });
