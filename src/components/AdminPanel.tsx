@@ -304,29 +304,38 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
         const systemInstruction = `You are a professional OCR assistant for the Bangladesh Election Commission.
         Extract voter records from the provided image/PDF.
         
+        DOC STRUCTURE HINTS (EC DOCUMENTS):
+        - Each voter record is in a standalone rectangular box.
+        - "পিতা/স্বামী" (or "Pita/Swami") refers to Father or Husband. Extract this as father_name.
+        - "মাতা" (or "Mata") refers to Mother. Extract this as mother_name.
+        - Note: If these fields are labels followed by names, extract the names.
+        
         CRITICAL LANGUAGE RULES:
-        - All person names (name, father_name, mother_name) MUST be extracted in BENGALI UNICODE.
+        - All person names (name, father_name, mother_name) MUST be extracted in BENGALI UNICODE characters.
         - NEVER translate names into English.
-        - Many EC documents use a "Board" font which appears garbled or like weird English characters in raw text. You MUST decode these into standard Bengali Unicode based on your knowledge of Bangladesh Election Commission documents.
+        - The "Board" font used in many EC documents contains specific visual patterns. Even if raw text looks like "P" or "Z", you must look at the VISUAL SHAPES to identify the Bengali characters for "পিতা", "মাতা", and the names.
   
         CRITICAL NUMERAL RULE:
         - ALL numbers (serial_no, voter_no, date_of_birth) MUST be in standard English numerals (0-9).
-        - If the document contains Bengali numerals (০-৯), you MUST convert them to standard English numerals (0-9). Example: ০০১৬ becomes 0016, ০১/০১/১৯৮২ becomes 01/01/1982.
+        - Convert Bengali numerals (০-৯) to (0-9).
   
         DOCUMENT ANALYSIS:
-        1. Detect if this is a COVER PAGE (summary, logos, counts) or a RECORDS PAGE (grid of voter boxes).
+        1. Detect if this is a COVER PAGE or a RECORDS PAGE.
         2. If COVER PAGE: Output [{"message": "COVER_PAGE_DETECTED"}].
-        3. If RECORDS PAGE: Extract all voter records.
+        3. If RECORDS PAGE: Extract ALL voter records present on the page.
   
-        DATA MAPPING:
-        - serial_no: The small serial number usually at the top left of each voter box (e.g., 0001, 0002).
-        - voter_no: The voter ID.
-        - name: Correct Bengali Unicode.
-        - father_name / mother_name: Bengali names.
-        - date_of_birth: DD/MM/YYYY.
+        JSON DATA MAPPING:
+        - serial_no: The sequential serial number in the box.
+        - voter_no: The long Voter ID number.
+        - name: The person's full name in Bengali Unicode.
+        - father_name: The Father or Husband name in Bengali Unicode.
+        - mother_name: The Mother name in Bengali Unicode.
+        - date_of_birth: The DOB in DD/MM/YYYY format.
         - gender: Male/Female.
   
-        LIMIT: Extract up to 30 records maximum per page to ensure JSON validity.`;
+        IMPORTANT: Look very carefully at the lines below the Name field. One is Father/Husband, one is Mother. You MUST extract both.
+  
+        LIMIT: Extract up to 30 records per page.`;
   
         const generationConfig = {
           responseMimeType: "application/json",
@@ -338,13 +347,13 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
                 serial_no: { type: Type.STRING },
                 voter_no: { type: Type.STRING },
                 name: { type: Type.STRING, description: "Full name in Bengali Unicode" },
-                father_name: { type: Type.STRING, description: "Father's name in Bengali" },
+                father_name: { type: Type.STRING, description: "Father's or husband's name in Bengali" },
                 mother_name: { type: Type.STRING, description: "Mother's name in Bengali" },
                 date_of_birth: { type: Type.STRING, description: "DD/MM/YYYY" },
                 gender: { type: Type.STRING, enum: ["Male", "Female"] },
                 message: { type: Type.STRING }
               },
-              required: ["voter_no", "name"],
+              required: ["voter_no", "name", "father_name", "mother_name"],
             },
           },
         };
@@ -472,12 +481,12 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
         const voters = Array.isArray(json) ? json : [json];
         
         const validatedVoters = voters.map((v: any) => ({
-          serial_no: bnToEn(String(v.serial_no || '')),
-          voter_no: bnToEn(String(v.voter_no || '')),
-          name: String(v.name || ''),
-          father_name: String(v.father_name || v.FatherName || ''),
-          mother_name: String(v.mother_name || v.mother_Name || v.MotherName || ''),
-          date_of_birth: bnToEn(String(v.date_of_birth || v.dob || v.DateOfBirth || '')),
+          serial_no: bnToEn(String(v.serial_no || v.sl || v.serial || '')),
+          voter_no: bnToEn(String(v.voter_no || v.nid || v.voterId || v.VoterNo || '')),
+          name: String(v.name || v.voter_name || v.VoterName || ''),
+          father_name: String(v.father_name || v.FatherName || v.father || v.Father || v.husband_name || v.HusbandName || ''),
+          mother_name: String(v.mother_name || v.mother_Name || v.MotherName || v.mother || v.Mother || ''),
+          date_of_birth: bnToEn(String(v.date_of_birth || v.dob || v.DateOfBirth || v.birth_date || '')),
           gender: (v.gender === 'Female' ? 'Female' : (v.gender === 'Male' ? 'Male' : defaultGender)) as Gender,
           village: targetVillage,
           union_name: selectedUnion
@@ -992,8 +1001,11 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
                         <td className="px-4 py-3 text-[10px] font-mono text-slate-400 pl-6">{voter.serial_no || i + 1}</td>
                         <td className="px-4 py-3 font-mono text-[11px] text-brand-dark font-bold tabular-nums">{voter.voter_no}</td>
                         <td className="px-4 py-3 font-bengali text-xs font-semibold">{voter.name}</td>
-                        <td className="px-4 py-3 font-bengali text-[11px] text-slate-500 truncate">
-                          {voter.father_name} / {voter.mother_name}
+                        <td className="px-4 py-3 font-bengali text-[10px] text-slate-500 leading-tight">
+                          <div className="flex flex-col">
+                            <span className="truncate">{voter.father_name || 'N/A'}</span>
+                            <span className="truncate border-t border-slate-100 mt-0.5 pt-0.5">{voter.mother_name || 'N/A'}</span>
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <select 

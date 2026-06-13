@@ -596,8 +596,24 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
                       <td className="px-4 py-3 font-bengali text-[13.5px] font-semibold text-slate-900 group-hover:text-brand transition-colors">
                         {voter.name}
                       </td>
-                      <td className="px-4 py-3 font-bengali text-[13px] text-slate-600">
-                        {voter.father_name} / {voter.mother_name}
+                      <td className="px-4 py-3 font-bengali text-[12.5px] text-slate-600 leading-tight">
+                        <div className="flex flex-col gap-0.5">
+                          {voter.father_name ? (
+                            <div className="truncate flex items-start gap-1">
+                              <span className="text-slate-300 font-bold text-[9px] w-3.5 mt-1 shrink-0 uppercase">F:</span>
+                              <span className="truncate">{voter.father_name}</span>
+                            </div>
+                          ) : null}
+                          {voter.mother_name ? (
+                            <div className="truncate flex items-start gap-1">
+                              <span className="text-slate-300 font-bold text-[9px] w-3.5 mt-1 shrink-0 uppercase">M:</span>
+                              <span className="truncate">{voter.mother_name}</span>
+                            </div>
+                          ) : null}
+                          {!voter.father_name && !voter.mother_name && (
+                            <span className="text-slate-300 italic text-[11px]">Not Found</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
