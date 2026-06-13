@@ -11,6 +11,7 @@ interface SidebarProps {
   unionCounts?: Record<string, number>;
   villageCounts?: Record<string, number>;
   voterCount?: number | null;
+  selectedVillageStats?: { total: number, male: number, female: number };
   isOpen?: boolean;
   onClose?: () => void;
 }
@@ -23,6 +24,7 @@ export default function Sidebar({
   unionCounts = {},
   villageCounts = {},
   voterCount = 0,
+  selectedVillageStats,
   isOpen = true,
   onClose
 }: SidebarProps) {
@@ -123,6 +125,27 @@ export default function Sidebar({
               </span>
             </div>
           </div>
+          
+          {selectedVillage && selectedVillageStats && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 pt-4 border-t border-sidebar-border/40 grid grid-cols-3 gap-2"
+            >
+              <div className="flex flex-col">
+                <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tight">Total</span>
+                <span className="text-xs font-bold text-white">{selectedVillageStats.total}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[8px] text-blue-500 font-bold uppercase tracking-tight">Male</span>
+                <span className="text-xs font-bold text-blue-400">{selectedVillageStats.male}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[8px] text-pink-500 font-bold uppercase tracking-tight">Female</span>
+                <span className="text-xs font-bold text-pink-400">{selectedVillageStats.female}</span>
+              </div>
+            </motion.div>
+          )}
         </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">

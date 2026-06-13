@@ -28,24 +28,28 @@ function EditVoterModal({ voter, onClose, onSave }: EditModalProps) {
     e.preventDefault();
     setSaving(true);
     try {
-      const normalizedData = {
+      const updatedVoter = {
+        ...formData,
         serial_no: bnToEn(formData.serial_no),
         voter_no: bnToEn(formData.voter_no),
-        nid: bnToEn(formData.nid),
-        name_bn: formData.name_bn,
-        father_name: formData.father_name,
-        mother_name: formData.mother_name,
-        dob: bnToEn(formData.dob),
-        gender: formData.gender,
+        date_of_birth: bnToEn(formData.date_of_birth),
       };
 
       const { error } = await supabase
         .from('voters')
-        .update(normalizedData)
+        .update({
+          serial_no: updatedVoter.serial_no,
+          voter_no: updatedVoter.voter_no,
+          name: updatedVoter.name,
+          father_name: updatedVoter.father_name,
+          mother_name: updatedVoter.mother_name,
+          date_of_birth: updatedVoter.date_of_birth,
+          gender: updatedVoter.gender
+        })
         .eq('id', voter.id);
 
       if (error) throw error;
-      onSave(normalizedData as Voter);
+      onSave(updatedVoter);
       toast.success('voter updated successfully');
       onClose();
     } catch (error: any) {
@@ -97,23 +101,12 @@ function EditVoterModal({ voter, onClose, onSave }: EditModalProps) {
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] uppercase font-bold text-slate-400">NID Number</label>
-            <input 
-              type="text" 
-              value={formData.nid || ''} 
-              onChange={(e) => setFormData({ ...formData, nid: e.target.value })}
-              className="px-3 py-2 border rounded border-slate-200 focus:outline-brand bg-slate-50 text-xs font-mono"
-              placeholder="Enter national ID number..."
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] uppercase font-bold text-slate-400">Full Name (Bengali)</label>
+            <label className="text-[10px] uppercase font-bold text-slate-400">Full Name</label>
             <input 
               type="text" 
               required
-              value={formData.name_bn || ''} 
-              onChange={(e) => setFormData({ ...formData, name_bn: e.target.value })}
+              value={formData.name || ''} 
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               className="px-3 py-2 border rounded border-slate-200 focus:outline-brand bg-slate-50 text-sm font-bengali"
             />
           </div>
@@ -144,14 +137,14 @@ function EditVoterModal({ voter, onClose, onSave }: EditModalProps) {
               <label className="text-[10px] uppercase font-bold text-slate-400">Date of Birth</label>
               <input 
                 type="text" 
-                value={formData.dob || ''} 
-                onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
+                value={formData.date_of_birth || ''} 
+                onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })}
                 placeholder="DD/MM/YYYY"
                 className="px-3 py-2 border rounded border-slate-200 focus:outline-brand bg-slate-50 text-xs font-mono"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400">Gender</label>
+              <label className="text-[10px] uppercase font-bold text-slate-400">Sex</label>
               <select 
                 value={formData.gender || 'Male'} 
                 onChange={(e) => setFormData({ ...formData, gender: e.target.value as Gender })}
@@ -202,21 +195,77 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
   const [editingVoter, setEditingVoter] = useState<Voter | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<Voter | null>(null);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const pageSize = 100;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [village, genderFilter, debouncedSearch]);
 
   useEffect(() => {
     fetchVoters();
-  }, [village]);
+  }, [village, currentPage, genderFilter, debouncedSearch]);
 
   const fetchVoters = async () => {
     setLoading(true);
     try {
-      let query = supabase
+      // 1. Get total count for the specific village, gender, and search filter
+      let countQuery = supabase
+        .from('voters')
+        .select('*', { count: 'exact', head: true })
+        .eq('village', village);
+
+      if (genderFilter !== 'All') {
+        countQuery = countQuery.eq('gender', genderFilter);
+      }
+
+      if (debouncedSearch) {
+        const s = `%${debouncedSearch}%`;
+        countQuery = countQuery.or(`voter_no.ilike.${s},name.ilike.${s},father_name.ilike.${s},mother_name.ilike.${s},date_of_birth.ilike.${s}`);
+      }
+
+      const { count, error: countError } = await countQuery;
+
+      if (countError) throw countError;
+      setTotalRecords(count || 0);
+      
+      if (!count) {
+        setVoters([]);
+        setLoading(false);
+        return;
+      }
+
+      // 2. Fetch only the current page of records
+      const from = (currentPage - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      let dataQuery = supabase
         .from('voters')
         .select('*')
         .eq('village', village)
-        .order('serial_no', { ascending: true });
+        .order('serial_no', { ascending: true, nullsFirst: false })
+        .order('id', { ascending: true })
+        .range(from, to);
 
-      const { data, error } = await query;
+      if (genderFilter !== 'All') {
+        dataQuery = dataQuery.eq('gender', genderFilter);
+      }
+
+      if (debouncedSearch) {
+        const s = `%${debouncedSearch}%`;
+        dataQuery = dataQuery.or(`voter_no.ilike.${s},name.ilike.${s},father_name.ilike.${s},mother_name.ilike.${s},date_of_birth.ilike.${s}`);
+      }
+
+      const { data, error } = await dataQuery;
 
       if (error) throw error;
       setVoters(data || []);
@@ -303,21 +352,7 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
     }
   };
 
-  const filteredVoters = voters.filter((voter) => {
-    const matchesGender = genderFilter === 'All' || voter.gender === genderFilter;
-    const q = searchQuery.toLowerCase();
-    
-    if (!q) return matchesGender;
-
-    const matchesSearch = 
-      voter.voter_no.toLowerCase().includes(q) ||
-      voter.name_bn.toLowerCase().includes(q) ||
-      voter.father_name.toLowerCase().includes(q) ||
-      voter.mother_name.toLowerCase().includes(q) ||
-      voter.dob.toLowerCase().includes(q);
-
-    return matchesGender && matchesSearch;
-  });
+  const filteredVoters = voters;
 
   return (
     <div className="p-6 h-full flex flex-col gap-5 overflow-hidden bg-surface">
@@ -332,10 +367,10 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
             <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
               <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', width: '40px' }}>SL</th>
               <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', width: '120px' }}>Voter ID</th>
-              <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px' }}>Name (Bengali)</th>
-              <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', width: '150px' }}>NID Number</th>
+              <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px' }}>Name</th>
+              <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', width: '50px' }}>Sex</th>
               <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px' }}>Parents</th>
-              <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', width: '80px' }}>DOB</th>
+              <th style={{ padding: '10px', textAlign: 'left', fontSize: '12px', width: '100px' }}>DOB</th>
             </tr>
           </thead>
           <tbody>
@@ -343,10 +378,10 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
               <tr key={v.id || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td style={{ padding: '8px', fontSize: '11px' }}>{v.serial_no || i + 1}</td>
                 <td style={{ padding: '8px', fontSize: '11px', fontWeight: 'bold' }}>{v.voter_no}</td>
-                <td style={{ padding: '8px', fontSize: '12px', fontWeight: 'bold' }}>{v.name_bn}</td>
-                <td style={{ padding: '8px', fontSize: '11px' }}>{v.nid || '-'}</td>
+                <td style={{ padding: '8px', fontSize: '12px', fontWeight: 'bold' }}>{v.name}</td>
+                <td style={{ padding: '8px', fontSize: '11px' }}>{v.gender}</td>
                 <td style={{ padding: '8px', fontSize: '11px' }}>{v.father_name} / {v.mother_name}</td>
-                <td style={{ padding: '8px', fontSize: '11px' }}>{v.dob}</td>
+                <td style={{ padding: '8px', fontSize: '11px' }}>{v.date_of_birth}</td>
               </tr>
             ))}
           </tbody>
@@ -425,12 +460,9 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
 
               <div className="pt-16 pb-8 px-8">
                 <div className="mb-6">
-                  <h2 className="text-2xl font-bengali font-bold text-slate-900 leading-tight">{selectedProfile.name_bn}</h2>
+                  <h2 className="text-2xl font-bengali font-bold text-slate-900 leading-tight">{selectedProfile.name}</h2>
                   <div className="flex flex-wrap items-center gap-2 mt-2">
                     <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-bold font-mono tracking-tighter">ID: {selectedProfile.voter_no}</span>
-                    {selectedProfile.nid && (
-                      <span className="px-2 py-0.5 bg-green-50 text-green-700 rounded text-[10px] font-bold font-mono border border-green-100">NID: {selectedProfile.nid}</span>
-                    )}
                   </div>
                 </div>
 
@@ -452,10 +484,10 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
                       <p className="text-[10px] text-slate-400 font-bold uppercase mb-1 tracking-wider">Birth Date</p>
-                      <p className="font-mono font-bold text-slate-700 text-sm">{selectedProfile.dob || 'N/A'}</p>
+                      <p className="font-mono font-bold text-slate-700 text-sm">{selectedProfile.date_of_birth || 'N/A'}</p>
                     </div>
                     <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-                      <p className="text-[10px] text-slate-400 font-bold uppercase mb-1 tracking-wider">Gender</p>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mb-1 tracking-wider">Sex</p>
                       <p className="text-xs font-bold text-slate-700">{selectedProfile.gender}</p>
                     </div>
                   </div>
@@ -477,7 +509,7 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
           </div>
         )}
       </AnimatePresence>
-      {/* Tab Controls and Stats */}
+      {/* Filter Tabs & Stats */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0 px-1">
         <div className="flex items-center gap-1 sm:gap-2 bg-slate-100 p-1 rounded-lg w-fit border border-slate-200 overflow-x-auto max-w-full no-scrollbar">
           {['All', 'Male', 'Female'].map((g) => (
@@ -490,7 +522,7 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
                   : 'text-slate-500 hover:bg-slate-200'
               }`}
             >
-              {g} ({voters.filter(v => g === 'All' ? true : v.gender === g).length})
+              {g}
             </button>
           ))}
         </div>
@@ -498,6 +530,9 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
         <div className="flex items-center gap-3">
           <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">
             Village: <span className="text-slate-900">{village}</span>
+          </div>
+          <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">
+            Total Found: <span className="text-brand">{totalRecords}</span>
           </div>
         </div>
       </div>
@@ -529,11 +564,10 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
             <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
               <tr>
                 <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase w-12">SL</th>
-                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase w-32">Snapshot</th>
-                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase w-48">Voter ID (Smart Link)</th>
-                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase">Voter Name (বোর্ড ফন্ট)</th>
-                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase">Father's Name</th>
-                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase">Mother's Name</th>
+                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase w-48">Voter ID</th>
+                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase">Voter Name</th>
+                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase">Parents</th>
+                <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase w-20">Sex</th>
                 <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase w-28">D.O.B</th>
                 <th className="px-4 py-3 font-semibold text-slate-500 text-[11px] uppercase w-24 text-right pr-8">Actions</th>
               </tr>
@@ -555,30 +589,24 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
                       key={voter.id || index}
                       className="data-row"
                     >
-                      <td className="px-4 py-3 text-slate-500 font-mono text-[11px]">{voter.serial_no || String(index + 1).padStart(2, '0')}</td>
-                      <td className="px-4 py-3">
-                        {voter.thumbnail ? (
-                          <div className="border border-slate-200 rounded p-0.5 bg-white shadow-sm overflow-hidden flex items-center justify-center w-fit">
-                            <img 
-                              src={voter.thumbnail} 
-                              alt="Snapshot" 
-                              className="max-h-12 w-auto object-contain cursor-zoom-in hover:opacity-80 transition-opacity"
-                              onClick={() => setZoomedImage(voter.thumbnail || null)}
-                            />
-                          </div>
-                        ) : (
-                          <div className="w-10 h-10 bg-slate-50 rounded flex items-center justify-center border border-dashed border-slate-200">
-                             <ImageIcon size={12} className="text-slate-300" />
-                          </div>
-                        )}
+                      <td className="px-4 py-3 text-slate-500 font-mono text-[11px]">
+                        {voter.serial_no || String((currentPage - 1) * pageSize + index + 1).padStart(2, '0')}
                       </td>
                       <td className="px-4 py-3 font-mono text-brand-dark font-bold text-[11.5px] tabular-nums">{voter.voter_no}</td>
                       <td className="px-4 py-3 font-bengali text-[13.5px] font-semibold text-slate-900 group-hover:text-brand transition-colors">
-                        {voter.name_bn}
+                        {voter.name}
                       </td>
-                      <td className="px-4 py-3 font-bengali text-[13px] text-slate-600">{voter.father_name}</td>
-                      <td className="px-4 py-3 font-bengali text-[13px] text-slate-600">{voter.mother_name}</td>
-                      <td className="px-4 py-3 font-mono text-[11px] text-slate-500">{voter.dob}</td>
+                      <td className="px-4 py-3 font-bengali text-[13px] text-slate-600">
+                        {voter.father_name} / {voter.mother_name}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          voter.gender === 'Male' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-pink-50 text-pink-600 border border-pink-100'
+                        }`}>
+                          {voter.gender}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-slate-500">{voter.date_of_birth}</td>
                       <td className="px-4 py-3 text-right pr-8">
                         <div className="flex items-center justify-end gap-3">
                           <button 
@@ -630,12 +658,29 @@ export default function VoterList({ village, isAdmin }: VoterListProps) {
         {/* Simple Dense Footer */}
         <div className="mt-auto p-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
           <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-            Showing {filteredVoters.length} of {voters.length} Records
+            Showing {((currentPage - 1) * pageSize) + 1}-{Math.min(currentPage * pageSize, totalRecords)} of {totalRecords} Records
           </span>
-          <div className="flex gap-1">
-            <button className="px-3 py-1 border border-slate-200 rounded bg-white text-slate-400 cursor-not-allowed text-[10px] font-bold">Prev</button>
-            <button className="px-3 py-1 border border-brand bg-brand text-white rounded text-[10px] font-bold">1</button>
-            <button className="px-3 py-1 border border-slate-200 bg-white text-slate-500 rounded text-[10px] font-bold">Next</button>
+          <div className="flex items-center gap-3">
+             <div className="flex gap-1">
+              <button 
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1 || loading}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-bold hover:bg-slate-50 transition-colors shadow-sm"
+              >
+                Prev
+              </button>
+              <div className="flex items-center px-4 bg-white border border-slate-200 rounded-lg shadow-sm">
+                <span className="text-[10px] font-bold text-brand">Page {currentPage} of {Math.max(1, Math.ceil(totalRecords / pageSize))}</span>
+              </div>
+              <button 
+                onClick={() => setCurrentPage(prev => (prev * pageSize < totalRecords ? prev + 1 : prev))}
+                disabled={currentPage * pageSize >= totalRecords || loading}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-bold hover:bg-slate-50 transition-colors shadow-sm"
+              >
+                Next
+              </button>
+            </div>
+            <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'}`} />
           </div>
         </div>
       </div>

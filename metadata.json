@@ -2,5 +2,5 @@
   "name": "Pangashi Voter Pro",
   "description": "Digital voter list management for 8 no Pangashi Union including 26 villages with PDF import and admin controls.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

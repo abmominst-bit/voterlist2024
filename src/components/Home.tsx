@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, MapPin, Database, ArrowRight, ShieldCheck, Info, Search, Bot, Loader2, X, ExternalLink } from 'lucide-react';
+import { Users, User, MapPin, Database, ArrowRight, ShieldCheck, Info, Search, Bot, Loader2, X, ExternalLink } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Voter } from '../constants';
 import toast from 'react-hot-toast';
@@ -29,7 +29,7 @@ export default function Home({ unionsCount, villagesCount, voterCount, onExplore
       const { data, error } = await supabase
         .from('voters')
         .select('*')
-        .or(`voter_no.ilike.%${searchQuery}%,name_bn.ilike.%${searchQuery}%,name_en.ilike.%${searchQuery}%,father_name.ilike.%${searchQuery}%,mother_name.ilike.%${searchQuery}%,nid.ilike.%${searchQuery}%,dob.ilike.%${searchQuery}%`)
+        .or(`voter_no.ilike.%${searchQuery}%,name.ilike.%${searchQuery}%,father_name.ilike.%${searchQuery}%,mother_name.ilike.%${searchQuery}%,date_of_birth.ilike.%${searchQuery}%`)
         .limit(20);
 
       if (error) throw error;
@@ -146,13 +146,18 @@ export default function Home({ unionsCount, villagesCount, voterCount, onExplore
                       >
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 bg-brand/5 rounded-full flex items-center justify-center text-brand font-bold text-sm shrink-0 border border-brand/10">
-                            {voter.gender === 'Male' ? 'M' : 'F'}
+                            <User size={18} />
                           </div>
                           <div>
-                            <h4 className="font-bold text-slate-900 font-bengali text-base">{voter.name_bn || voter.name_en}</h4>
-                            <div className="flex items-center gap-3 mt-0.5">
+                            <h4 className="font-bold text-slate-900 font-bengali text-base">{voter.name}</h4>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
                               <span className="text-[10px] font-mono text-slate-400">ID: {voter.voter_no}</span>
-                              <span className="text-[10px] font-mono text-slate-400">DOB: {voter.dob}</span>
+                              <span className="text-[10px] font-mono text-slate-400">DOB: {voter.date_of_birth}</span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                voter.gender === 'Female' ? 'bg-pink-50 text-pink-600' : 'bg-blue-50 text-blue-600'
+                              }`}>
+                                {voter.gender}
+                              </span>
                               <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
                                 <MapPin size={10} />
                                 {voter.village} ({voter.union_name})

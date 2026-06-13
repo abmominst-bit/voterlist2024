@@ -39,16 +39,13 @@ export type Gender = "Male" | "Female";
 export interface Voter {
   id?: string;
   serial_no?: string;
+  name: string;
   voter_no: string;
-  name_en: string;
-  name_bn: string;
   father_name: string;
   mother_name: string;
-  dob: string;
+  date_of_birth: string;
   gender: Gender;
   village: string;
   union_name?: string;
-  thumbnail?: string;
-  nid?: string;
   created_at?: string;
 }

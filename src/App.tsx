@@ -139,17 +139,40 @@ export default function App() {
     }
   }, [isConfigured]);
 
+  const [villageStats, setVillageStats] = useState<{ total: number, male: number, female: number }>({ total: 0, male: 0, female: 0 });
+
   const fetchCount = async () => {
     if (!selectedVillage) return;
     setIsLoadingCount(true);
     try {
-      const { count, error } = await supabase
-        .from('voters')
-        .select('*', { count: 'exact', head: true })
-        .eq('village', selectedVillage);
+      // Parallelize count fetching
+      const [totalRes, maleRes, femaleRes] = await Promise.all([
+        supabase
+          .from('voters')
+          .select('*', { count: 'exact', head: true })
+          .eq('village', selectedVillage),
+        supabase
+          .from('voters')
+          .select('*', { count: 'exact', head: true })
+          .eq('village', selectedVillage)
+          .eq('gender', 'Male'),
+        supabase
+          .from('voters')
+          .select('*', { count: 'exact', head: true })
+          .eq('village', selectedVillage)
+          .eq('gender', 'Female')
+      ]);
       
-      if (error) throw error;
-      setVoterCount(count);
+      if (totalRes.error) throw totalRes.error;
+      if (maleRes.error) throw maleRes.error;
+      if (femaleRes.error) throw femaleRes.error;
+
+      setVoterCount(totalRes.count);
+      setVillageStats({ 
+        total: totalRes.count || 0, 
+        male: maleRes.count || 0, 
+        female: femaleRes.count || 0 
+      });
       setIsTableMissing(false);
     } catch (err: any) {
       console.error("Error fetching count:", err);
@@ -218,23 +241,29 @@ export default function App() {
               : 'The required tables were not found in your Supabase database.'}
           </p>
           <div className="space-y-4 text-left bg-slate-50 p-6 rounded-2xl border border-line font-mono text-[11px] leading-relaxed text-slate-600">
-            <p className="font-bold text-ink">Setup Instructions:</p>
-            <ol className="list-decimal list-inside space-y-2 text-[10px]">
+            <p className="font-bold text-ink">প্রয়োজনীয় সেটআপ নির্দেশিকা (Setup Instructions):</p>
+            <ol className="list-decimal list-inside space-y-3 text-[11px]">
               {!isConfigured && (
                 <>
-                  <li>Create a project at <a href="https://supabase.com" target="_blank" className="text-accent underline">supabase.com</a></li>
-                  <li>Go to Project Settings → API to get <span className="font-bold">Project URL</span> and <span className="font-bold">anon public key</span>.</li>
-                  <li className="text-brand font-bold">On Vercel:
-                    <ol className="list-decimal list-inside ml-4 mt-1 space-y-1">
-                      <li>Go to <span className="font-bold">Settings → Environment Variables</span></li>
-                      <li>Add <span className="text-slate-900">VITE_SUPABASE_URL</span>, <span className="text-slate-900">VITE_SUPABASE_ANON_KEY</span> and <span className="text-slate-900">VITE_GEMINI_API_KEY</span></li>
-                      <li className="text-red-600 font-extrabold uppercase">CRITICAL: Go to the "Deployments" tab in Vercel and click "Redeploy" on your latest build. Environment variables are only applied during the build process!</li>
+                  <li><a href="https://supabase.com" target="_blank" className="text-accent underline font-bold">supabase.com</a>-এ একটি প্রোজেক্ট তৈরি করুন।</li>
+                  <li>Project Settings → API থেকে <span className="font-bold">Project URL</span> এবং <span className="font-bold">anon public key</span> সংগ্রহ করুন।</li>
+                  <li className="text-brand font-bold bg-amber-50 p-2 rounded-lg border border-amber-100">Vercel-এ সেটআপ:
+                    <ol className="list-decimal list-inside ml-4 mt-2 space-y-2 text-slate-700">
+                      <li>আপনার Vercel ড্যাশবোর্ডে গিয়ে <span className="font-bold">Settings → Environment Variables</span>-এ যান।</li>
+                      <li>নিচের ৩টি ভেরিয়েবল যোগ করুন:
+                        <ul className="list-disc list-inside ml-6 mt-1 font-mono text-[10px] text-slate-900">
+                          <li>VITE_SUPABASE_URL</li>
+                          <li>VITE_SUPABASE_ANON_KEY</li>
+                          <li>VITE_GEMINI_API_KEY</li>
+                        </ul>
+                      </li>
+                      <li className="text-red-600 font-extrabold uppercase">গুরুত্বপূর্ণ: ভেরিয়েবলগুলো সেভ করার পর অবশ্যই 'Deployments' ট্যাবে গিয়ে সর্বশেষ বিল্ডটি 'Redeploy' করুন।</li>
                     </ol>
                   </li>
-                  <li>For local testing: Create a <span className="font-bold">.env</span> file and add the variables there.</li>
+                  <li>লোকাল টেস্টের জন্য: আপনার কম্পিউটারে একটি <span className="font-bold">.env</span> ফাইল তৈরি করে ভেরিয়েবলগুলো সেখানে লিখুন।</li>
                 </>
               )}
-              <li>Go to your Supabase <span className="font-bold">SQL Editor</span> and run this script:</li>
+              <li>আপনার Supabase <span className="font-bold">SQL Editor</span>-এ গিয়ে নিচের কোডটি রান করুন:</li>
             </ol>
             <div className="mt-3 relative group">
               <div className="p-3 bg-slate-800 text-slate-300 rounded-lg overflow-x-auto text-[10px] font-mono max-h-60">
@@ -256,16 +285,13 @@ create table if not exists voters (
   id uuid default gen_random_uuid() primary key,
   serial_no text,
   voter_no text not null,
-  nid text,
-  name_bn text not null,
-  name_en text,
+  name text not null,
   father_name text,
   mother_name text,
-  dob text,
-  gender text,
+  date_of_birth text,
+  gender text check (gender in ('Male', 'Female')),
   village text not null,
   union_name text,
-  thumbnail text,
   created_at timestamp with time zone default now()
 );
 
@@ -314,6 +340,7 @@ create policy "public_villages" on villages for all using (true) with check (tru
         unionCounts={unionCounts}
         villageCounts={villageCounts}
         voterCount={globalVoterCount}
+        selectedVillageStats={villageStats}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         onSelectVillage={(v) => {
@@ -338,9 +365,17 @@ create policy "public_villages" on villages for all using (true) with check (tru
             <div className="font-bold text-slate-900 flex items-center gap-1.5 font-bengali truncate">
               {selectedVillage || 'Select Village'}
               {voterCount !== null && !isTableMissing && (
-                <span className="bg-brand/10 text-brand text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">
-                  {voterCount}
-                </span>
+                <div className="flex items-center gap-1 ml-1 scale-[0.85] origin-left">
+                  <span className="bg-brand/10 text-brand text-[10px] px-2 py-0.5 rounded-full font-mono font-bold whitespace-nowrap shadow-sm border border-brand/5">
+                    ALL ({voterCount})
+                  </span>
+                  <span className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold whitespace-nowrap shadow-sm border border-blue-100">
+                    M ({villageStats.male})
+                  </span>
+                  <span className="bg-pink-50 text-pink-600 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold whitespace-nowrap shadow-sm border border-pink-100">
+                    F ({villageStats.female})
+                  </span>
+                </div>
               )}
               {isTableMissing && (
                 <span className="bg-red-50 text-red-600 text-[9px] px-2 py-0.5 rounded-full border border-red-100 flex items-center gap-1">

@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { supabase } from '../lib/supabase';
 import { UNIONS, VILLAGES, Voter, Gender } from '../constants';
 import VoterList from './VoterList';
-import { FileUp, Save, Trash2, CheckCircle, AlertCircle, Loader2, Upload, FileText, Image as ImageIcon, ListFilter, Settings, Globe, MapPin, Edit2, Check, X } from 'lucide-react';
+import { FileUp, Save, Trash2, CheckCircle, AlertCircle, Loader2, Upload, FileText, Image as ImageIcon, ListFilter, Settings, Globe, MapPin, Edit2, Check, X, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -53,11 +53,18 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
 
   const [selectedUnion, setSelectedUnion] = useState<string>('');
   const [targetVillage, setTargetVillage] = useState(allVillages[0] || VILLAGES[0]);
+  const [defaultGender, setDefaultGender] = useState<Gender>('Male');
   const [activeTab, setActiveTab] = useState<'import' | 'manage' | 'setup'>('import');
   const [extractedVoters, setExtractedVoters] = useState<ExtractedVoter[]>([]);
   const [processing, setProcessing] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [lastUploadedIds, setLastUploadedIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonInputRef = useRef<HTMLInputElement>(null);
+
+  // API Key State
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [savedApiKey, setSavedApiKey] = useState<string | null>(() => localStorage.getItem('CUSTOM_GEMINI_API_KEY'));
 
   // Management UI State
   const [newUnion, setNewUnion] = useState('');
@@ -69,6 +76,53 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
   const [editUnionName, setEditUnionName] = useState('');
   const [editingVillageId, setEditingVillageId] = useState<string | null>(null);
   const [editVillageName, setEditVillageName] = useState('');
+  const [villageStats, setVillageStats] = useState<{[key: string]: {male: number, female: number}}>({});
+
+  React.useEffect(() => {
+    fetchVillageStats();
+  }, [villagesData]);
+
+  const fetchVillageStats = async () => {
+    try {
+      // 1. Get total count first
+      const { count: total, error: countError } = await supabase
+        .from('voters')
+        .select('*', { count: 'exact', head: true });
+
+      if (countError) throw countError;
+      if (!total) return;
+
+      const pageSize = 1000;
+      const maxPages = 50; // Cap at 50k records for stats calculation to ensure performance
+      const totalPages = Math.min(Math.ceil(total / pageSize), maxPages);
+      
+      // 2. Fetch pages in parallel
+      const pagePromises = Array.from({ length: totalPages }).map((_, i) => 
+        supabase
+          .from('voters')
+          .select('village, gender')
+          .range(i * pageSize, (i + 1) * pageSize - 1)
+      );
+
+      const results = await Promise.all(pagePromises);
+      const allVoterData: {village: string, gender: string}[] = [];
+      
+      for (const { data, error } of results) {
+        if (error) throw error;
+        if (data) allVoterData.push(...data);
+      }
+      
+      const stats: {[key: string]: {male: number, female: number}} = {};
+      allVoterData.forEach(v => {
+        if (!stats[v.village]) stats[v.village] = { male: 0, female: 0 };
+        if (v.gender === 'Male') stats[v.village].male++;
+        else if (v.gender === 'Female') stats[v.village].female++;
+      });
+      setVillageStats(stats);
+    } catch (err) {
+      console.error('Failed to fetch village stats:', err);
+    }
+  };
 
   React.useEffect(() => {
     if (displayUnions.length > 0 && !selectedUnion) {
@@ -142,6 +196,20 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
     } catch (err: any) {
       toast.error(err.message || 'Failed to add village');
     }
+  };
+
+  const handleSaveApiKey = () => {
+    if (!apiKeyInput.trim()) return;
+    localStorage.setItem('CUSTOM_GEMINI_API_KEY', apiKeyInput.trim());
+    setSavedApiKey(apiKeyInput.trim());
+    setApiKeyInput('');
+    toast.success('Gemini API Key saved locally!');
+  };
+
+  const handleClearApiKey = () => {
+    localStorage.removeItem('CUSTOM_GEMINI_API_KEY');
+    setSavedApiKey(null);
+    toast.success('Custom API Key cleared. Now using system key.');
   };
 
   const handleUpdateVillage = async (id: string, oldName: string) => {
@@ -218,19 +286,15 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
 
       try {
         // Look for the key in multiple possible locations
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY || 
+        // Priority: Local Storage (User Manual) > Vite Env > Process Env
+        const apiKey = savedApiKey || 
+                       import.meta.env.VITE_GEMINI_API_KEY || 
                        (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) ||
                        (typeof process !== 'undefined' ? (process.env as any).VITE_GEMINI_API_KEY : undefined);
         
-        console.log("Gemini Deployment Check:", {
-          hasViteEnv: !!import.meta.env.VITE_GEMINI_API_KEY,
-          hasProcessEnv: typeof process !== 'undefined' && !!process.env.GEMINI_API_KEY,
-          hasProcessViteEnv: typeof process !== 'undefined' && !!(process.env as any).VITE_GEMINI_API_KEY
-        });
-
         if (!apiKey || apiKey === "undefined" || apiKey === "MY_GEMINI_API_KEY" || apiKey.length < 10) {
-          console.error("Gemini API Key validation failed. Key found:", apiKey ? "Yes (too short or placeholder)" : "No");
-          throw new Error("Gemini API Key missing or invalid. Action Required:\n1. Ensure VITE_GEMINI_API_KEY is in Vercel Env Vars.\n2. You MUST trigger a MANUAL REDEPLOY in Vercel.");
+          console.error("Gemini API Key validation failed.");
+          throw new Error("Gemini API Key পাওয়া যায়নি বা এটি ভুল। \n\nসমাধান:\n১. নিচের 'Settings' থেকে আপনার নিজস্ব API Key যোগ করুন।\n২ অথবা Vercel Settings-এ 'VITE_GEMINI_API_KEY' যোগ করে Redeploy করুন।");
         }
 
         const ai = new GoogleGenAI({ apiKey });
@@ -240,30 +304,27 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
         const systemInstruction = `You are a professional OCR assistant for the Bangladesh Election Commission.
         Extract voter records from the provided image/PDF.
         
-        CRITICAL: For every individual voter box, you MUST identify its exact bounding box coordinates using the format [ymin, xmin, ymax, xmax] in the 0-1000 scale.
-        
         CRITICAL LANGUAGE RULES:
-        - All person names (name_bn, father_name, mother_name) MUST be extracted in BENGALI UNICODE.
+        - All person names (name, father_name, mother_name) MUST be extracted in BENGALI UNICODE.
         - NEVER translate names into English.
         - Many EC documents use a "Board" font which appears garbled or like weird English characters in raw text. You MUST decode these into standard Bengali Unicode based on your knowledge of Bangladesh Election Commission documents.
   
         CRITICAL NUMERAL RULE:
-        - ALL numbers (serial_no, voter_no, dob) MUST be in standard English numerals (0-9).
+        - ALL numbers (serial_no, voter_no, date_of_birth) MUST be in standard English numerals (0-9).
         - If the document contains Bengali numerals (০-৯), you MUST convert them to standard English numerals (0-9). Example: ০০১৬ becomes 0016, ০১/০১/১৯৮২ becomes 01/01/1982.
   
         DOCUMENT ANALYSIS:
         1. Detect if this is a COVER PAGE (summary, logos, counts) or a RECORDS PAGE (grid of voter boxes).
         2. If COVER PAGE: Output [{"message": "COVER_PAGE_DETECTED"}].
-        3. If RECORDS PAGE: Extract all voter records with their bounding boxes.
+        3. If RECORDS PAGE: Extract all voter records.
   
         DATA MAPPING:
         - serial_no: The small serial number usually at the top left of each voter box (e.g., 0001, 0002).
         - voter_no: The voter ID.
-        - name_bn: Correct Bengali Unicode.
+        - name: Correct Bengali Unicode.
         - father_name / mother_name: Bengali names.
-        - dob: DD/MM/YYYY.
+        - date_of_birth: DD/MM/YYYY.
         - gender: Male/Female.
-        - box_2d: [ymin, xmin, ymax, xmax] coordinates of the voter box.
   
         LIMIT: Extract up to 30 records maximum per page to ensure JSON validity.`;
   
@@ -276,19 +337,14 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
               properties: {
                 serial_no: { type: Type.STRING },
                 voter_no: { type: Type.STRING },
-                name_bn: { type: Type.STRING },
-                father_name: { type: Type.STRING },
-                mother_name: { type: Type.STRING },
-                dob: { type: Type.STRING },
+                name: { type: Type.STRING, description: "Full name in Bengali Unicode" },
+                father_name: { type: Type.STRING, description: "Father's name in Bengali" },
+                mother_name: { type: Type.STRING, description: "Mother's name in Bengali" },
+                date_of_birth: { type: Type.STRING, description: "DD/MM/YYYY" },
                 gender: { type: Type.STRING, enum: ["Male", "Female"] },
-                box_2d: { 
-                  type: Type.ARRAY, 
-                  items: { type: Type.NUMBER },
-                  description: "[ymin, xmin, ymax, xmax] coordinates"
-                },
                 message: { type: Type.STRING }
               },
-              required: ["voter_no", "name_bn"],
+              required: ["voter_no", "name"],
             },
           },
         };
@@ -362,44 +418,18 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
             toast.error(`No records found in "${file.name}".`);
           } else {
             const votersWithVillage = parsedResult
-              .filter((v: any) => v.voter_no && v.name_bn)
+              .filter((v: any) => v.voter_no && v.name)
               .map((v: any): ExtractedVoter => {
-                let thumbnail = '';
-                if (originalImageCanvas && v.box_2d && v.box_2d.length === 4) {
-                  try {
-                    const [ymin, xmin, ymax, xmax] = v.box_2d;
-                    const canvas = document.createElement('canvas');
-                    const w = originalImageCanvas.width;
-                    const h = originalImageCanvas.height;
-                    
-                    const cropX = (xmin / 1000) * w;
-                    const cropY = (ymin / 1000) * h;
-                    const cropW = ((xmax - xmin) / 1000) * w;
-                    const cropH = ((ymax - ymin) / 1000) * h;
-                    
-                    canvas.width = cropW;
-                    canvas.height = cropH;
-                    const ctx = canvas.getContext('2d');
-                    ctx?.drawImage(originalImageCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-                    thumbnail = canvas.toDataURL('image/jpeg', 0.8);
-                  } catch (cropErr) {
-                    console.error("Thumbnail crop failed:", cropErr);
-                  }
-                }
-  
                 return {
                   serial_no: bnToEn(v.serial_no),
                   voter_no: bnToEn(v.voter_no),
-                  name_bn: v.name_bn?.trim(),
-                  name_en: v.name_bn?.trim(), // Placeholder
+                  name: v.name?.trim(),
                   father_name: v.father_name?.trim(),
                   mother_name: v.mother_name?.trim(),
-                  dob: bnToEn(v.dob),
-                  gender: v.gender,
+                  date_of_birth: bnToEn(v.date_of_birth || v.dob),
+                  gender: (v.gender === 'Female' ? 'Female' : (v.gender === 'Male' ? 'Male' : defaultGender)) as Gender,
                   village: targetVillage,
-                  union_name: selectedUnion,
-                  thumbnail,
-                  nid: ''
+                  union_name: selectedUnion
                 };
               });
             
@@ -425,24 +455,86 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleJsonUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
+    if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+      toast.error('Please upload a valid JSON file');
+      return;
+    }
+
+    setProcessing(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        const voters = Array.isArray(json) ? json : [json];
+        
+        const validatedVoters = voters.map((v: any) => ({
+          serial_no: bnToEn(String(v.serial_no || '')),
+          voter_no: bnToEn(String(v.voter_no || '')),
+          name: String(v.name || ''),
+          father_name: String(v.father_name || v.FatherName || ''),
+          mother_name: String(v.mother_name || v.mother_Name || v.MotherName || ''),
+          date_of_birth: bnToEn(String(v.date_of_birth || v.dob || v.DateOfBirth || '')),
+          gender: (v.gender === 'Female' ? 'Female' : (v.gender === 'Male' ? 'Male' : defaultGender)) as Gender,
+          village: targetVillage,
+          union_name: selectedUnion
+        })).filter(v => v.voter_no && v.name);
+
+        setExtractedVoters(prev => [...prev, ...validatedVoters]);
+        toast.success(`Imported ${validatedVoters.length} records from JSON`);
+      } catch (err) {
+        toast.error('Failed to parse JSON file');
+      } finally {
+        setProcessing(false);
+        if (jsonInputRef.current) jsonInputRef.current.value = '';
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleUndoLastUpload = async () => {
+    if (lastUploadedIds.length === 0 || uploading) return;
+    if (!window.confirm(`Undo last upload? This will delete the ${lastUploadedIds.length} records you just added.`)) return;
+
+    setUploading(true);
+    try {
+      const { error } = await supabase
+        .from('voters')
+        .delete()
+        .in('id', lastUploadedIds);
+
+      if (error) throw error;
+      
+      toast.success(`Undo successful: Removed last ${lastUploadedIds.length} records.`);
+      setLastUploadedIds([]);
+      fetchVillageStats();
+      if (onDataSaved) onDataSaved();
+    } catch (err: any) {
+      console.error('Undo error:', err);
+      toast.error('Failed to undo upload');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSaveAll = async () => {
     if (extractedVoters.length === 0) return;
     setUploading(true);
 
     try {
-      // Prepare data for saving
-      const dataToSave = extractedVoters.map(({ box_2d, ...rest }) => ({
-        ...rest,
-        name_en: rest.name_bn || rest.name_en || ""
-      }));
-
-      const { error } = await supabase.from('voters').insert(dataToSave);
+      const { data, error } = await supabase.from('voters').insert(extractedVoters).select('id');
       if (error) throw error;
+
+      if (data) {
+        setLastUploadedIds(data.map(d => d.id));
+      }
 
       toast.success(`Saved ${extractedVoters.length} records!`);
       setExtractedVoters([]);
+      fetchVillageStats();
       if (onDataSaved) onDataSaved();
     } catch (error: any) {
       console.error('Error saving records:', error);
@@ -474,6 +566,7 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
       if (error) throw error;
       
       toast.success(`Successfully cleared all data for ${targetVillage}`);
+      fetchVillageStats();
       if (onDataSaved) onDataSaved();
     } catch (error: any) {
       console.error('Error clearing village data:', error);
@@ -491,7 +584,22 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
           <p className="text-[10px] lg:text-[11px] text-slate-500 font-medium uppercase tracking-tighter mt-0.5">Bulk Upload & Database Management</p>
         </div>
         
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 overflow-x-auto max-w-full no-scrollbar">
+        <div className="flex flex-col xl:flex-row xl:items-center gap-4 w-full lg:w-auto">
+          {activeTab === 'import' && (
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 h-10 shadow-sm shrink-0">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Default Sex:</span>
+              <select 
+                value={defaultGender}
+                onChange={(e) => setDefaultGender(e.target.value as Gender)}
+                className="bg-transparent text-[11px] font-bold focus:outline-none cursor-pointer text-brand"
+              >
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+              </select>
+            </div>
+          )}
+
+          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 overflow-x-auto no-scrollbar shrink-0">
             <button 
               onClick={() => setActiveTab('import')}
               className={`flex items-center gap-2 px-3 lg:px-4 py-1.5 rounded text-[10px] lg:text-[11px] font-bold transition-all whitespace-nowrap ${
@@ -521,12 +629,12 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
             </button>
           </div>
 
-          <div className="flex flex-wrap lg:flex-nowrap gap-2 w-full lg:w-auto">
-            <div className="flex flex-1 lg:flex-none bg-slate-50 border border-slate-200 rounded-lg p-1 shadow-sm h-10 overflow-hidden">
+          <div className="flex flex-wrap sm:flex-nowrap gap-2 w-full xl:w-auto">
+            <div className="flex flex-1 sm:flex-none bg-slate-50 border border-slate-200 rounded-lg p-1 shadow-sm h-10 overflow-hidden">
               <select 
                 value={selectedUnion}
                 onChange={(e) => handleUnionChange(e.target.value)}
-                className="flex-1 lg:flex-none bg-transparent px-2 lg:px-3 py-1 text-[11px] lg:text-[12px] font-bold focus:outline-none cursor-pointer border-r border-slate-200 font-bengali min-w-[100px] lg:min-w-[140px]"
+                className="flex-1 sm:flex-none bg-transparent px-2 lg:px-3 py-1 text-[11px] lg:text-[12px] font-bold focus:outline-none cursor-pointer border-r border-slate-200 font-bengali min-w-[80px] lg:min-w-[120px]"
               >
                 {displayUnions.map(u => (
                   <option key={u.name} value={u.name}>{u.name}</option>
@@ -536,7 +644,7 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
               <select 
                 value={targetVillage}
                 onChange={(e) => setTargetVillage(e.target.value)}
-                className="flex-1 lg:flex-none bg-transparent px-2 lg:px-3 py-1 text-[11px] lg:text-[12px] font-bold focus:outline-none cursor-pointer font-bengali min-w-[100px] lg:min-w-[140px]"
+                className="flex-1 sm:flex-none bg-transparent px-2 lg:px-3 py-1 text-[11px] lg:text-[12px] font-bold focus:outline-none cursor-pointer font-bengali min-w-[80px] lg:min-w-[120px]"
               >
                 {displayUnions.find(u => u.name === selectedUnion)?.villages.map(v => (
                   <option key={v} value={v}>{v}</option>
@@ -547,39 +655,106 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
             <button 
               onClick={handleClearVillageData}
               disabled={processing}
-              className="px-3 border border-red-200 text-red-500 hover:bg-red-50 rounded transition-all disabled:opacity-50 flex items-center justify-center shrink-0"
+              className="px-3 border border-red-200 text-red-500 hover:bg-red-50 rounded transition-all disabled:opacity-50 flex items-center justify-center shrink-0 h-10"
               title={`Delete all data for ${targetVillage}`}
             >
               <Trash2 size={14} />
             </button>
 
+            {activeTab === 'import' && lastUploadedIds.length > 0 && (
+              <button 
+                onClick={handleUndoLastUpload}
+                disabled={uploading}
+                className="px-3 border border-amber-200 text-amber-600 hover:bg-amber-50 rounded transition-all disabled:opacity-50 flex items-center justify-center shrink-0 h-10 gap-2 font-bold text-[10px]"
+                title={`Undo last upload (${lastUploadedIds.length} records)`}
+              >
+                <RotateCcw size={14} />
+                <span className="hidden lg:inline">UNDO</span>
+              </button>
+            )}
+
             {activeTab === 'import' && (
               <>
                 <button
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => jsonInputRef.current?.click()}
                   disabled={processing}
-                  className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-brand text-white px-4 lg:px-5 py-2 rounded text-[10px] lg:text-[11px] font-bold hover:bg-brand-dark transition-all disabled:opacity-50 shadow-sm whitespace-nowrap"
+                  className="flex-1 sm:flex-none h-10 flex items-center justify-center gap-2 bg-slate-900 text-white px-4 lg:px-5 rounded text-[10px] lg:text-[11px] font-bold hover:bg-black transition-all disabled:opacity-50 shadow-sm whitespace-nowrap"
                 >
-                  {processing ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
-                  IMPORT DATA
+                  <FileText size={14} />
+                  IMPORT JSON
                 </button>
+
                 <input 
                   type="file" 
-                  ref={fileInputRef} 
-                  onChange={handleFilesUpload} 
+                  ref={jsonInputRef} 
+                  onChange={handleJsonUpload} 
                   className="hidden" 
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  multiple
+                  accept=".json"
                 />
               </>
             )}
           </div>
         </div>
+      </div>
 
       {activeTab === 'setup' ? (
         <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-xl shadow-sm overflow-y-auto p-8 custom-scrollbar">
           <div className="max-w-4xl mx-auto space-y-12">
             
+            {/* Gemini API Key Management */}
+            <section className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-brand border border-slate-100 shadow-sm">
+                    <Settings size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Gemini API Configuration</h3>
+                    <p className="text-xs text-slate-500">Add your own API key if the default limit is reached</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-4">
+                  <div className="flex gap-2">
+                    <input 
+                      type="password" 
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder={savedApiKey ? "••••••••••••••••••••••••" : "Paste your Gemini API Key here..."}
+                      className="flex-1 px-4 py-2 border border-slate-200 rounded-xl bg-white text-sm font-mono focus:outline-brand"
+                    />
+                    <button 
+                      onClick={handleSaveApiKey}
+                      className="px-6 py-2 bg-slate-900 text-white rounded-xl font-bold text-xs hover:bg-black transition-all flex items-center gap-2"
+                    >
+                      <CheckCircle size={14} />
+                      SAVE KEY
+                    </button>
+                  </div>
+                  
+                  {savedApiKey && (
+                    <div className="flex items-center justify-between bg-emerald-50 border border-emerald-100 p-3 rounded-xl">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle size={16} className="text-emerald-500" />
+                        <span className="text-[11px] font-bold text-emerald-700">Custom API Key is active from your local storage.</span>
+                      </div>
+                      <button 
+                        onClick={handleClearApiKey}
+                        className="text-[10px] font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded transition-all"
+                      >
+                        REMOVE CUSTOM KEY
+                      </button>
+                    </div>
+                  )}
+                  
+                  <p className="text-[10px] text-slate-400 font-medium">
+                    * Your API Key is stored safely in your browser and is never sent to our servers. 
+                    Get a free key from <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-brand underline">Google AI Studio</a>.
+                  </p>
+                </div>
+            </section>
+
+            <div className="h-[1px] bg-slate-100" />
+
             {/* Union Management */}
             <section>
                 <div className="flex items-center gap-3 mb-6">
@@ -732,6 +907,10 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
                                 ) : (
                                   <>
                                     <span className="text-xs font-bengali font-medium text-slate-600">{v}</span>
+                                    <div className="flex items-center gap-1.5 ml-1">
+                                      <span className="text-[9px] font-bold text-blue-500 bg-blue-50 px-1 rounded">M: {villageStats[v]?.male || 0}</span>
+                                      <span className="text-[9px] font-bold text-pink-500 bg-pink-50 px-1 rounded">F: {villageStats[v]?.female || 0}</span>
+                                    </div>
                                     {!isVillageStatic && (
                                       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
                                         <button 
@@ -799,11 +978,10 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
                   <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
                     <tr>
                       <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-6 w-12">SL</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest w-40">Snapshot</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest w-32">Voter ID</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest w-36">NID Number</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name (BN)</th>
+                      <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest w-30">Voter ID</th>
+                      <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name</th>
                       <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Parents</th>
+                      <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest w-20">Sex</th>
                       <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest w-28">DOB</th>
                       <th className="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right pr-6 w-20">Del</th>
                     </tr>
@@ -812,44 +990,26 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
                     {extractedVoters.map((voter, i) => (
                       <tr key={i} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3 text-[10px] font-mono text-slate-400 pl-6">{voter.serial_no || i + 1}</td>
-                        <td className="px-4 py-3">
-                          {voter.thumbnail ? (
-                            <div className="border border-slate-200 rounded p-0.5 bg-white shadow-sm overflow-hidden flex items-center justify-center">
-                              <img 
-                                src={voter.thumbnail} 
-                                alt="Box" 
-                                className="max-h-12 w-auto object-contain cursor-zoom-in"
-                                onClick={() => {
-                                  const win = window.open("");
-                                  win?.document.write(`<img src="${voter.thumbnail}" style="max-width:100%">`);
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <div className="w-full h-8 bg-slate-50 rounded flex items-center justify-center border border-dashed border-slate-200">
-                               <ImageIcon size={10} className="text-slate-300" />
-                            </div>
-                          )}
-                        </td>
                         <td className="px-4 py-3 font-mono text-[11px] text-brand-dark font-bold tabular-nums">{voter.voter_no}</td>
-                        <td className="px-4 py-3">
-                          <input 
-                            type="text"
-                            placeholder="Add NID..."
-                            value={voter.nid || ''}
-                            onChange={(e) => {
-                              const newVoters = [...extractedVoters];
-                              newVoters[i].nid = e.target.value;
-                              setExtractedVoters(newVoters);
-                            }}
-                            className="w-full px-2 py-1.5 border border-slate-200 rounded bg-slate-50 text-[10px] font-mono focus:outline-brand focus:bg-white"
-                          />
-                        </td>
-                        <td className="px-4 py-3 font-bengali text-xs font-semibold">{voter.name_bn}</td>
+                        <td className="px-4 py-3 font-bengali text-xs font-semibold">{voter.name}</td>
                         <td className="px-4 py-3 font-bengali text-[11px] text-slate-500 truncate">
                           {voter.father_name} / {voter.mother_name}
                         </td>
-                        <td className="px-4 py-3 font-mono text-[11px] text-slate-500">{voter.dob}</td>
+                        <td className="px-4 py-3">
+                          <select 
+                            value={voter.gender}
+                            onChange={(e) => {
+                              const newVoters = [...extractedVoters];
+                              newVoters[i].gender = e.target.value as Gender;
+                              setExtractedVoters(newVoters);
+                            }}
+                            className="text-[10px] font-bold border border-slate-200 rounded px-1 py-0.5 bg-slate-50"
+                          >
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                          </select>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-[11px] text-slate-500">{voter.date_of_birth}</td>
                         <td className="px-4 py-3 text-right pr-6">
                           <button 
                             onClick={() => removeVoter(i)}
@@ -890,29 +1050,42 @@ export default function AdminPanel({ onDataSaved, unionsData = [], villagesData 
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 text-center">Supabase Database Setup</p>
             <div className="bg-slate-900 rounded-lg p-4 font-mono text-[9px] leading-relaxed text-slate-400 border border-slate-800 shadow-xl self-stretch overflow-x-auto">
               <pre className="text-slate-300">
-{`create table voters (
+{`create table unions (
+  id uuid default gen_random_uuid() primary key,
+  name text unique not null,
+  created_at timestamp with time zone default now()
+);
+
+create table villages (
+  id uuid default gen_random_uuid() primary key,
+  name text not null,
+  union_name text not null,
+  created_at timestamp with time zone default now(),
+  unique(name, union_name)
+);
+
+create table voters (
   id uuid default gen_random_uuid() primary key,
   serial_no text,
   voter_no text not null,
-  nid text,
-  name_bn text not null,
-  name_en text,
+  name text not null,
   father_name text,
   mother_name text,
-  dob text,
+  date_of_birth text,
   gender text check (gender in ('Male', 'Female')),
   village text not null,
   union_name text,
-  thumbnail text,
   created_at timestamp with time zone default now()
 );
 
 -- RLS & Policies
+alter table unions enable row level security;
+alter table villages enable row level security;
 alter table voters enable row level security;
-create policy "Allow public read" on voters for select using (true);
-create policy "Allow public delete" on voters for delete using (true);
-create policy "Allow public insert" on voters for insert with check (true);
-create policy "Allow public update" on voters for update using (true);`}
+
+create policy "public_all" on unions for all using (true);
+create policy "public_all" on villages for all using (true);
+create policy "public_all" on voters for all using (true);`}
               </pre>
             </div>
           </div>
